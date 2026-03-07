@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from pingpal.agent import generate_reply
 from pingpal.config import settings
@@ -14,8 +14,7 @@ from pingpal.services.messenger_verifier import (
 class WebhookResult:
     status_code: int
     body: dict | str
-    reply_to: str | None = None
-    reply_text: str | None = None
+    replies: list[tuple[str, str]] = field(default_factory=list)
 
 
 store = InMemoryStore()
@@ -34,38 +33,43 @@ def handle_challenge(query: dict[str, str | None]) -> WebhookResult:
     return WebhookResult(status_code=200, body=challenge)
 
 
-def handle_event(*, payload: dict, raw_body: bytes, signature_header: str | None) -> WebhookResult:
+def handle_webhook(*, payload: dict, raw_body: bytes, signature_header: str | None) -> WebhookResult:
     try:
         verify_signature(signature_header, raw_body, settings.messenger_app_secret)
     except MessengerVerificationError as exc:
         return WebhookResult(status_code=401, body={"detail": str(exc)})
 
-    event_id = payload.get("id")
-    if not event_id:
-        return WebhookResult(status_code=400, body={"detail": "Missing event id"})
+    if payload.get("object") != "page":
+        return WebhookResult(status_code=400, body={"detail": "Unsupported object type"})
 
-    if not store.mark_event_processed(event_id):
-        return WebhookResult(status_code=200, body={"status": "duplicate", "event_id": event_id})
+    replies: list[tuple[str, str]] = []
 
-    message = payload.get("message", {})
-    message_id = message.get("mid", event_id)
-    text = message.get("text", "")
-    sender_id = payload.get("sender", {}).get("id", "unknown")
-    thread_id = payload.get("recipient", {}).get("id", "group")
+    for entry in payload.get("entry", []):
+        for event in entry.get("messaging", []):
+            message = event.get("message", {})
+            mid = message.get("mid")
+            text = message.get("text", "").strip()
 
-    history = store.get_thread_messages(thread_id)
-    store.add_message(message_id=message_id, thread_id=thread_id, user_id=sender_id, text=text)
-    reply = generate_reply(current_text=text, history=history)
-    store.add_message(
-        message_id=f"bot-{message_id}",
-        thread_id=thread_id,
-        user_id="pingpal",
-        text=reply,
-        role="assistant",
-    )
-    return WebhookResult(
-        status_code=200,
-        body={"status": "processed", "event_id": event_id},
-        reply_to=sender_id,
-        reply_text=reply,
-    )
+            # skip events without a message id or text (attachments, reactions, etc.)
+            if not mid or not text:
+                continue
+
+            if not store.mark_event_processed(mid):
+                continue
+
+            sender_id = event.get("sender", {}).get("id", "unknown")
+            thread_id = event.get("recipient", {}).get("id", "unknown")
+
+            history = store.get_thread_messages(thread_id)
+            store.add_message(message_id=mid, thread_id=thread_id, user_id=sender_id, text=text)
+            reply = generate_reply(current_text=text, history=history)
+            store.add_message(
+                message_id=f"bot-{mid}",
+                thread_id=thread_id,
+                user_id="pingpal",
+                text=reply,
+                role="assistant",
+            )
+            replies.append((sender_id, reply))
+
+    return WebhookResult(status_code=200, body={"status": "ok"}, replies=replies)
