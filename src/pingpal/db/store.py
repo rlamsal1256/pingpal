@@ -24,6 +24,9 @@ class InMemoryStore:
         self.processed_events.add(event_id)
         return True
 
+    def get_thread_messages(self, thread_id: str) -> list[MessageRecord]:
+        return [m for m in self.messages if m.thread_id == thread_id]
+
     def add_message(self, *, message_id: str, thread_id: str, user_id: str, text: str, role: str = "user") -> None:
         self.messages.append(
             MessageRecord(

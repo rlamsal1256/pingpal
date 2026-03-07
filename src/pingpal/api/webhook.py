@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from pingpal.agent import build_echo_reply
+from pingpal.agent import generate_reply
 from pingpal.config import settings
 from pingpal.db.store import InMemoryStore
 from pingpal.services.messenger_verifier import (
@@ -14,6 +14,8 @@ from pingpal.services.messenger_verifier import (
 class WebhookResult:
     status_code: int
     body: dict | str
+    reply_to: str | None = None
+    reply_text: str | None = None
 
 
 store = InMemoryStore()
@@ -51,12 +53,19 @@ def handle_event(*, payload: dict, raw_body: bytes, signature_header: str | None
     sender_id = payload.get("sender", {}).get("id", "unknown")
     thread_id = payload.get("recipient", {}).get("id", "group")
 
+    history = store.get_thread_messages(thread_id)
     store.add_message(message_id=message_id, thread_id=thread_id, user_id=sender_id, text=text)
+    reply = generate_reply(current_text=text, history=history)
+    store.add_message(
+        message_id=f"bot-{message_id}",
+        thread_id=thread_id,
+        user_id="pingpal",
+        text=reply,
+        role="assistant",
+    )
     return WebhookResult(
         status_code=200,
-        body={
-            "status": "processed",
-            "event_id": event_id,
-            "reply_preview": build_echo_reply(text),
-        },
+        body={"status": "processed", "event_id": event_id},
+        reply_to=sender_id,
+        reply_text=reply,
     )
