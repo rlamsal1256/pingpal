@@ -1,6 +1,39 @@
-"""Application entrypoint placeholder.
+import logging
 
-A web framework endpoint (FastAPI/Lambda) can call:
-- `pingpal.api.webhook.handle_challenge`
-- `pingpal.api.webhook.handle_event`
-"""
+from fastapi import FastAPI, Request, Response
+from fastapi.responses import JSONResponse, PlainTextResponse
+
+from pingpal.api.webhook import handle_challenge, handle_event
+from pingpal.config import settings
+from pingpal.services.messenger_client import send_text
+
+logger = logging.getLogger(__name__)
+
+app = FastAPI()
+
+
+@app.get("/webhook")
+async def webhook_challenge(request: Request) -> Response:
+    result = handle_challenge(dict(request.query_params))
+    if isinstance(result.body, str):
+        return PlainTextResponse(result.body, status_code=result.status_code)
+    return JSONResponse(result.body, status_code=result.status_code)
+
+
+@app.post("/webhook")
+async def webhook_event(request: Request) -> JSONResponse:
+    raw_body = await request.body()
+    payload = await request.json()
+    signature = request.headers.get("X-Hub-Signature-256")
+    result = handle_event(payload=payload, raw_body=raw_body, signature_header=signature)
+
+    if result.reply_to and result.reply_text:
+        if settings.messenger_page_access_token:
+            try:
+                send_text(result.reply_to, result.reply_text, settings.messenger_page_access_token)
+            except Exception:
+                logger.exception("Failed to send reply to %s", result.reply_to)
+        else:
+            logger.warning("MESSENGER_PAGE_ACCESS_TOKEN not set; skipping reply")
+
+    return JSONResponse(result.body, status_code=result.status_code)
