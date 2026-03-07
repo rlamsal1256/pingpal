@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "server",
+  "dolt_database": "pingpal",
+  "project_id": "884ff61c-506d-4f4e-a8d4-ae063411f399"
+}
