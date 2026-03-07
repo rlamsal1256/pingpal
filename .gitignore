@@ -1,3 +1,10 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+.env
+*.egg-info/
+dist/
+
+# Dolt database files (added by bd init)
+.dolt/
+*.db
