@@ -4,6 +4,7 @@ __pycache__/
 .env
 *.egg-info/
 dist/
+.claude/
 
 # Dolt database files (added by bd init)
 .dolt/
